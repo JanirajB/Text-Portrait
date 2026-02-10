@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TEXT PORTRAIT</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+<!-- ══════════════  HEADER  ══════════════ -->
+<header>
+  <h1>Text Portrait</h1>
+  <span class="sub">ASCII · Image Converter</span>
+</header>
+
+<!-- ══════════════  MAIN LAYOUT  ══════════════ -->
+<main>
+
+  <!-- ── LEFT CONTROLS PANEL ── -->
+  <aside>
+    <div class="panel">
+      <div class="panel-title">Configure</div>
+      <div class="panel-body">
+
+        <!-- Image Upload / Drop Zone -->
+        <div class="drop-zone" id="drop-zone">
+          <input type="file" id="file-input" accept="image/*" />
+          <span class="drop-zone-icon">▣</span>
+          <strong>Upload Image</strong>
+          <p>Drop here or click to browse</p>
+        </div>
+
+        <!-- Thumbnail preview (hidden until image loaded) -->
+        <div id="thumb-wrap">
+          <img id="thumb" src="" alt="preview"/>
+        </div>
+
+        <hr class="rule"/>
+
+        <!-- Width slider -->
+        <div class="row">
+          <label>Width (chars) <span id="w-val">120</span></label>
+          <input type="range" id="width-slider" min="40" max="300" value="120" step="5"/>
+        </div>
+
+        <!-- Font size slider -->
+        <div class="row">
+          <label>Font Size (px) <span id="fs-val">7</span></label>
+          <input type="range" id="fontsize-slider" min="4" max="14" value="7" step="1"/>
+        </div>
+
+        <hr class="rule"/>
+
+        <!-- Charset selector -->
+        <div class="row">
+          <label>Char Set</label>
+          <select id="charset-select">
+            <option value="dense">Dense gradient</option>
+            <option value="blocks">Block elements</option>
+            <option value="braille">Braille dots</option>
+            <option value="minimal">Minimal ( . : | # )</option>
+            <option value="custom">Custom →</option>
+          </select>
+        </div>
+
+        <!-- Custom chars textarea (visible only when "Custom" chosen) -->
+        <div class="row" id="custom-row" style="display:none">
+          <label>Custom chars (dark → light)</label>
+          <textarea class="char-input" id="custom-chars" placeholder="e.g.  @#S%?*+;:,. ">@#S%?*+;:,. </textarea>
+        </div>
+
+        <hr class="rule"/>
+
+        <!-- Toggle checkboxes -->
+        <label class="check-row">
+          <input type="checkbox" id="invert-check"/>
+          <span>Invert (light on dark)</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="color-check"/>
+          <span>Coloured output</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="contrast-check" checked/>
+          <span>Auto-contrast boost</span>
+        </label>
+
+        <hr class="rule"/>
+
+        <!-- Action buttons -->
+        <button class="btn"           id="generate-btn" disabled>Generate Portrait</button>
+        <button class="btn secondary" id="download-btn" style="display:none">↓ Download PNG</button>
+
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── RIGHT OUTPUT PANEL ── -->
+  <section>
+    <div class="output-wrap">
+
+      <!-- Output top bar -->
+      <div class="output-header">
+        <span>Output</span>
+        <div class="output-actions">
+          <button class="btn secondary copy-sm" id="copy-btn" style="display:none">Copy Text</button>
+        </div>
+      </div>
+
+      <!-- Portrait canvas area -->
+      <div class="canvas-wrap" id="canvas-wrap">
+
+        <!-- Shown before any image is uploaded -->
+        <div class="placeholder" id="placeholder">
+          <span class="big">ASCII</span>
+          <p>Upload an image to begin</p>
+        </div>
+
+        <!-- Shown while rendering -->
+        <div class="spinner" id="spinner">
+          <div class="spinner-ring"></div>
+          <p>Rendering&hellip;</p>
+        </div>
+
+        <!-- The portrait is painted here -->
+        <canvas id="ascii-canvas"></canvas>
+
+      </div>
+
+      <!-- Stats shown after first render -->
+      <div class="stats-bar" id="stats-bar" style="display:none">
+        <span>Cols  <b id="stat-cols">—</b></span>
+        <span>Rows  <b id="stat-rows">—</b></span>
+        <span>Chars <b id="stat-chars">—</b></span>
+        <span>Canvas <b id="stat-size">—</b></span>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<!-- Hidden work canvas used for pixel sampling -->
+<canvas id="work-canvas"></canvas>
+
+<!-- Toast notification -->
+<div class="toast" id="toast"></div>
+
+
+<!-- ══════════════  JAVASCRIPT  ══════════════ -->
+<script>
+
+// ── Character sets (dark → light) ──────────────────────────────
+const CHARSETS = {
+  dense:   ' .\'`^",:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$',
+  blocks:  ' ░▒▓█',
+  braille: ' ⠂⠆⠇⠧⠷⠿⣿',
+  minimal: ' .:;|=+x#@',
+};
+
+// ── App state ───────────────────────────────────────────────────
+let loadedImg     = null;
+let lastText      = '';
+let lastColorData = null;
+
+// ── DOM refs ────────────────────────────────────────────────────
+const fileInput     = document.getElementById('file-input');
+const dropZone      = document.getElementById('drop-zone');
+const thumb         = document.getElementById('thumb');
+const thumbWrap     = document.getElementById('thumb-wrap');
+const widthSlider   = document.getElementById('width-slider');
+const wVal          = document.getElementById('w-val');
+const fsSlider      = document.getElementById('fontsize-slider');
+const fsVal         = document.getElementById('fs-val');
+const charsetSel    = document.getElementById('charset-select');
+const customRow     = document.getElementById('custom-row');
+const customChars   = document.getElementById('custom-chars');
+const invertCheck   = document.getElementById('invert-check');
+const colorCheck    = document.getElementById('color-check');
+const contrastCheck = document.getElementById('contrast-check');
+const genBtn        = document.getElementById('generate-btn');
+const dlBtn         = document.getElementById('download-btn');
+const copyBtn       = document.getElementById('copy-btn');
+const asciiCanvas   = document.getElementById('ascii-canvas');
+const workCanvas    = document.getElementById('work-canvas');
+const placeholder   = document.getElementById('placeholder');
+const spinner       = document.getElementById('spinner');
+const statsBar      = document.getElementById('stats-bar');
+const toastEl       = document.getElementById('toast');
+
+// ── Toast notification ──────────────────────────────────────────
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  setTimeout(() => toastEl.classList.remove('show'), 2400);
+}
+
+// ── Slider labels (live update) ─────────────────────────────────
+widthSlider.addEventListener('input', () => { wVal.textContent = widthSlider.value; });
+fsSlider.addEventListener('input',    () => { fsVal.textContent = fsSlider.value; });
+
+// ── Show/hide custom charset field ─────────────────────────────
+charsetSel.addEventListener('change', () => {
+  customRow.style.display = charsetSel.value === 'custom' ? 'flex' : 'none';
+});
+
+// ── Drag-and-drop handlers ──────────────────────────────────────
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) loadFile(f);
+});
+
+// ── File input (click to browse) ────────────────────────────────
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadFile(fileInput.files[0]);
+});
+
+function loadFile(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    loadedImg = img;
+    thumb.src = url;
+    thumbWrap.style.display = 'block';
+    genBtn.disabled = false;
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
+// ── Build ASCII data from image pixels ─────────────────────────
+function buildAscii(img, cols, charset, invert, doContrast) {
+  // Downscale the image to `cols` columns.
+  // CHAR_ASPECT corrects for the fact that monospace characters
+  // are taller than they are wide (approx. 2:1 ratio).
+  const CHAR_ASPECT = 0.45;
+  const rows = Math.round((img.height / img.width) * cols * CHAR_ASPECT);
+
+  workCanvas.width  = cols;
+  workCanvas.height = rows;
+  const wctx = workCanvas.getContext('2d');
+  wctx.drawImage(img, 0, 0, cols, rows);
+  const px = wctx.getImageData(0, 0, cols, rows).data;
+
+  // Build greyscale luminance array (Rec. 601 weighting)
+  let gray = new Uint8Array(cols * rows);
+  const colorArr = [];
+
+  for (let i = 0; i < cols * rows; i++) {
+    const b = i * 4;
+    gray[i] = Math.round(0.299 * px[b] + 0.587 * px[b + 1] + 0.114 * px[b + 2]);
+    colorArr.push([px[b], px[b + 1], px[b + 2]]);
+  }
+
+  // Auto-contrast: stretch histogram so darkest=0, brightest=255
+  if (doContrast) {
+    let mn = 255, mx = 0;
+    for (const v of gray) { if (v < mn) mn = v; if (v > mx) mx = v; }
+    const range = mx - mn || 1;
+    for (let i = 0; i < gray.length; i++)
+      gray[i] = Math.round((gray[i] - mn) / range * 255);
+  }
+
+  // Map each pixel brightness to a character index
+  const chars = charset.split('');
+  const lines = [];
+  const lineColors = [];
+
+  for (let r = 0; r < rows; r++) {
+    let line = '';
+    const rowColors = [];
+    for (let c = 0; c < cols; c++) {
+      const idx = r * cols + c;
+      let v = gray[idx];
+      if (invert) v = 255 - v;
+      const ci = Math.floor(v / 255 * (chars.length - 1));
+      line += chars[ci];
+      rowColors.push(colorArr[idx]);
+    }
+    lines.push(line);
+    lineColors.push(rowColors);
+  }
+
+  return { lines, rows, cols, colorArr: lineColors };
+}
+
+// ── Paint ASCII lines onto the output canvas ────────────────────
+function renderCanvas(lines, colorArr, fontSize, invert, colored) {
+  const cols = lines[0].length;
+  const rows = lines.length;
+  const ctx  = asciiCanvas.getContext('2d');
+
+  // Measure character cell size
+  ctx.font = `${fontSize}px "Courier Prime", monospace`;
+  const charW = ctx.measureText('M').width;
+  const charH = fontSize * 1.2;
+
+  const W = Math.ceil(charW * cols);
+  const H = Math.ceil(charH * rows);
+  asciiCanvas.width  = W;
+  asciiCanvas.height = H;
+
+  // Fill background
+  ctx.fillStyle = invert ? '#0a0a0a' : '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.font         = `${fontSize}px "Courier Prime", monospace`;
+  ctx.textBaseline = 'top';
+
+  // Draw each character
+  for (let r = 0; r < rows; r++) {
+    const y = r * charH;
+    for (let c = 0; c < cols; c++) {
+      const ch = lines[r][c];
+      if (ch === ' ') continue;      // skip blank chars (saves draw calls)
+
+      if (colored && colorArr) {
+        const [cr, cg, cb] = colorArr[r][c];
+        ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+      } else {
+        ctx.fillStyle = invert ? '#e8e2d8' : '#0a0a0a';
+      }
+
+      ctx.fillText(ch, c * charW, y);
+    }
+  }
+
+  return { w: W, h: H };
+}
+
+// ── Main generate function ──────────────────────────────────────
+function generate() {
+  if (!loadedImg) return;
+
+  spinner.classList.add('active');
+  placeholder.style.display = 'none';
+
+  // Use setTimeout so the spinner paints before heavy JS runs
+  setTimeout(() => {
+    const cols    = parseInt(widthSlider.value);
+    const fs      = parseInt(fsSlider.value);
+    const cset    = charsetSel.value === 'custom'
+                    ? (customChars.value || CHARSETS.dense)
+                    : CHARSETS[charsetSel.value];
+    const inv     = invertCheck.checked;
+    const colored = colorCheck.checked;
+    const doContr = contrastCheck.checked;
+
+    const { lines, rows, colorArr } = buildAscii(loadedImg, cols, cset, inv, doContr);
+    lastText      = lines.join('\n');
+    lastColorData = colorArr;
+
+    const size = renderCanvas(lines, colorArr, fs, inv, colored);
+
+    spinner.classList.remove('active');
+
+    // Populate stats bar
+    document.getElementById('stat-cols').textContent  = cols;
+    document.getElementById('stat-rows').textContent  = rows;
+    document.getElementById('stat-chars').textContent = (cols * rows).toLocaleString();
+    document.getElementById('stat-size').textContent  = `${size.w}×${size.h}px`;
+    statsBar.style.display = 'flex';
+
+    dlBtn.style.display   = 'block';
+    copyBtn.style.display = 'block';
+  }, 30);
+}
+
+// ── Button listeners ────────────────────────────────────────────
+genBtn.addEventListener('click', generate);
+
+dlBtn.addEventListener('click', () => {
+  asciiCanvas.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href  = URL.createObjectURL(blob);
+    a.download = 'text-portrait.png';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Image saved ↓');
+  });
+});
+
+copyBtn.addEventListener('click', () => {
+  navigator.clipboard.writeText(lastText)
+    .then(() => showToast('Text copied to clipboard'))
+    .catch(() => showToast('Copy failed — try a different browser'));
+});
+
+// ── Auto re-render when any control changes (debounced) ─────────
+let debTimer;
+function debouncedGen() {
+  if (!loadedImg) return;
+  clearTimeout(debTimer);
+  debTimer = setTimeout(generate, 400);
+}
+
+[widthSlider, fsSlider, invertCheck, colorCheck, contrastCheck]
+  .forEach(el => el.addEventListener('change', debouncedGen));
+
+charsetSel.addEventListener('change',  debouncedGen);
+customChars.addEventListener('input',  debouncedGen);
+
+</script>
+</body>
+</html>
